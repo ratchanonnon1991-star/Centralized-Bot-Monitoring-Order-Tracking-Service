@@ -1,0 +1,5 @@
+allowBuilds:
+  '@parcel/watcher': false
+  unrs-resolver: false
+minimumReleaseAgeExclude:
+  - dotenv@18.0.6

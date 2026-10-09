@@ -1,0 +1,180 @@
+### Oxide Bot Monitor - API requests
+### Works with VS Code "REST Client" and JetBrains HTTP Client.
+### Set @host / @token to match your .env (PORT, ADMIN_TOKEN).
+
+@host = http://localhost:3001
+@token = change-me-admin-token
+@auth = Bearer {{token}}
+
+### Health (no auth)
+GET {{host}}/api/health
+
+### Overview: kill-switch + summary bar + order counts + latest package
+GET {{host}}/api/overview
+Authorization: {{auth}}
+
+#####################################################################
+# Orders - state machine
+#####################################################################
+
+### Create order (Idempotency-Key required). Re-send this exact request: same response, header Idempotent-Replayed: true
+# @name createOrder
+POST {{host}}/api/orders
+Authorization: {{auth}}
+Content-Type: application/json
+Idempotency-Key: demo-order-0001
+X-Actor: shop-webhook
+
+{
+  "externalOrderId": "SHOP-0001",
+  "amount": 349,
+  "currency": "THB",
+  "product": "UC 600",
+  "customerRef": "player#1234"
+}
+
+### Same key, different body -> 422 IDEMPOTENCY_KEY_REUSED
+POST {{host}}/api/orders
+Authorization: {{auth}}
+Content-Type: application/json
+Idempotency-Key: demo-order-0001
+
+{ "externalOrderId": "SHOP-0001", "amount": 1 }
+
+### Same externalOrderId, new key -> 200 with created=false (no duplicate order). Fields that are sent must match, else 409 ORDER_CONFLICT
+POST {{host}}/api/orders
+Authorization: {{auth}}
+Content-Type: application/json
+Idempotency-Key: demo-order-0002
+
+{ "externalOrderId": "SHOP-0001", "amount": 349 }
+
+### Payment confirmed -> QUEUED (send twice: second returns changed=false)
+POST {{host}}/api/orders/{{createOrder.response.body.id}}/payment-confirmed
+Authorization: {{auth}}
+
+### Get one order
+GET {{host}}/api/orders/{{createOrder.response.body.id}}
+Authorization: {{auth}}
+
+### Timeline (every status change with reason, bot, attempt)
+GET {{host}}/api/orders/{{createOrder.response.body.id}}/timeline
+Authorization: {{auth}}
+
+### List orders (filters: status, botId, limit, offset)
+GET {{host}}/api/orders?status=QUEUED&limit=20
+Authorization: {{auth}}
+
+### Cancel (only PENDING_PAYMENT / QUEUED never taken by a bot; otherwise 409 INVALID_TRANSITION / ORDER_ALREADY_ATTEMPTED)
+POST {{host}}/api/orders/{{createOrder.response.body.id}}/cancel
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "reason": "customer request" }
+
+### Manual retry of a FAILED order
+POST {{host}}/api/orders/1/retry
+Authorization: {{auth}}
+
+#####################################################################
+# Bots
+#####################################################################
+
+### All bots (state, heartbeat, metrics, current order, latest result)
+GET {{host}}/api/bots
+Authorization: {{auth}}
+
+### One bot + 24h done/failed stats
+GET {{host}}/api/bots/bot-01
+Authorization: {{auth}}
+
+### Turn a bot off (ปิดบอท) - takes effect immediately for dispatch
+POST {{host}}/api/bots/bot-01/commands
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "command": "stop" }
+
+### Turn a bot on (เปิดบอท)
+POST {{host}}/api/bots/bot-01/commands
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "command": "start" }
+
+### Ask the agent for its status / restart it
+POST {{host}}/api/bots/bot-01/commands
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "command": "status" }
+
+### Command history
+GET {{host}}/api/bots/bot-01/commands?limit=20
+Authorization: {{auth}}
+
+### Bot logs
+GET {{host}}/api/bots/bot-01/logs?limit=50
+Authorization: {{auth}}
+
+#####################################################################
+# Kill-switch
+#####################################################################
+
+### Stop the whole system (ปิดทั้งระบบ)
+PUT {{host}}/api/system/kill-switch
+Authorization: {{auth}}
+Content-Type: application/json
+X-Actor: ops-on-call
+
+{ "engaged": true, "reason": "provider maintenance" }
+
+### Resume (เปิดทั้งระบบ)
+PUT {{host}}/api/system/kill-switch
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "engaged": false }
+
+#####################################################################
+# Code deployment
+#####################################################################
+
+### Upload a .zip package (uploading identical bytes again returns the existing package)
+# @name upload
+POST {{host}}/api/deployments
+Authorization: {{auth}}
+Content-Type: multipart/form-data; boundary=----oxide
+
+------oxide
+Content-Disposition: form-data; name="file"; filename="oxide-bot.zip"
+Content-Type: application/zip
+
+< ./sample-package.zip
+------oxide--
+
+### List packages
+GET {{host}}/api/deployments
+Authorization: {{auth}}
+
+### Update every bot (omit botIds) - repeat it: bots report already-pending / up-to-date
+POST {{host}}/api/deployments/{{upload.response.body.id}}/rollout
+Authorization: {{auth}}
+Content-Type: application/json
+
+{}
+
+### Update selected bots only
+POST {{host}}/api/deployments/{{upload.response.body.id}}/rollout
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "botIds": ["bot-02"] }
+
+#####################################################################
+# Audit
+#####################################################################
+
+### Audit log (filters: targetType, targetId)
+GET {{host}}/api/audit-logs?limit=50
+Authorization: {{auth}}

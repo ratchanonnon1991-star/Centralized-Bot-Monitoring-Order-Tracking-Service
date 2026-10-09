@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Oxide Bot Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <!-- Header -->
+    <header class="card header">
+      <div class="brand">
+        <div class="logo">⬡</div>
+        <div>
+          <div class="eyebrow">OXIDE</div>
+          <h1>Bot Monitor</h1>
+          <p class="muted">ควบคุมเครื่องแบบมินิมอล · กดการ์ดเพื่อดูรายละเอียด</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="pill" id="live"><span class="dot"></span><span id="live-text">กำลังเชื่อมต่อ</span> <span id="clock" class="mono"></span></span>
+        <button class="btn ghost" id="btn-token" title="เปลี่ยน Admin Token">🔑</button>
+        <button class="btn ghost" id="btn-refresh">รีเฟรช</button>
+      </div>
+    </header>
+
+    <!-- Kill switch -->
+    <section class="card row-between" id="kill-card">
+      <div>
+        <div class="label">Kill-switch ทั้งระบบ</div>
+        <div class="big" id="ks-state">—</div>
+        <p class="muted" id="ks-note">—</p>
+      </div>
+      <div class="actions">
+        <button class="btn success" id="btn-ks-on">เปิดทั้งระบบ</button>
+        <button class="btn danger" id="btn-ks-off">ปิดทั้งระบบ</button>
+      </div>
+    </section>
+
+    <!-- Deployment -->
+    <section class="card" id="deploy-card">
+      <div class="row-between">
+        <div>
+          <div class="label">อัปเดตโค้ดบอท Oxide</div>
+          <div class="big" id="dep-title">ยังไม่มีแพ็กเกจ</div>
+          <p class="muted" id="dep-meta">อัปโหลดไฟล์ .zip เพื่อสร้างแพ็กเกจใหม่</p>
+        </div>
+        <div class="actions">
+          <label class="btn ghost file-btn">แพ็กโค้ดบอท (.zip)<input type="file" id="dep-file" accept=".zip" hidden /></label>
+          <button class="btn success" id="btn-update-all" disabled>อัปเดตทุกเครื่อง</button>
+        </div>
+      </div>
+      <div id="dep-list" class="dep-list"></div>
+    </section>
+
+    <!-- Summary -->
+    <section class="summary">
+      <div class="card stat"><div class="label">เครื่องออนไลน์</div><div class="num" id="s-online">0</div></div>
+      <div class="card stat"><div class="label">บอทเปิดรับงาน</div><div class="num green" id="s-active">0</div></div>
+      <div class="card stat"><div class="label">รับรอ (standby)</div><div class="num amber" id="s-standby">0</div></div>
+      <div class="card stat"><div class="label">กำลังทำงาน</div><div class="num blue" id="s-progress">0</div></div>
+    </section>
+
+    <!-- Bots -->
+    <div class="row-between section-title">
+      <h2>เครื่องทั้งหมด</h2>
+      <span class="muted">กดการ์ดเพื่อเปิดรายละเอียด</span>
+    </div>
+    <section class="bots" id="bots"></section>
+
+    <!-- Orders -->
+    <div class="row-between section-title">
+      <h2>ออเดอร์</h2>
+      <div class="actions">
+        <select id="order-filter" class="select">
+          <option value="">ทุกสถานะ</option>
+          <option>PENDING_PAYMENT</option><option>QUEUED</option><option>IN_PROGRESS</option>
+          <option>DELAYED</option><option>COMPLETED</option><option>FAILED</option><option>CANCELLED</option>
+        </select>
+        <button class="btn ghost" id="btn-new-order">+ ออเดอร์ทดสอบ</button>
+        <button class="btn ghost" id="btn-new-5">+ 5 ออเดอร์ (ชำระแล้ว)</button>
+      </div>
+    </div>
+    <section class="card table-card">
+      <div class="order-counts" id="order-counts"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Order</th><th>สินค้า</th><th>ยอด</th><th>สถานะ</th><th>บอท</th><th>ครั้งที่</th><th>อัปเดต</th><th></th></tr></thead>
+          <tbody id="orders"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Audit -->
+    <details class="card audit">
+      <summary>Audit log (ล่าสุด)</summary>
+      <ul id="audit" class="log-list"></ul>
+    </details>
+  </main>
+
+  <dialog id="modal" class="modal">
+    <div class="modal-head"><h3 id="modal-title"></h3><button class="btn ghost" id="modal-close">✕</button></div>
+    <div id="modal-body"></div>
+  </dialog>
+
+  <dialog id="login" class="modal small">
+    <form method="dialog" id="login-form">
+      <h3>Admin Token</h3>
+      <p class="muted">ใส่ค่า ADMIN_TOKEN จากไฟล์ .env (เก็บไว้ในเบราว์เซอร์นี้เท่านั้น)</p>
+      <input type="password" id="login-token" class="input" autocomplete="off" required />
+      <div class="actions end"><button class="btn success" type="submit">เข้าสู่ระบบ</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
