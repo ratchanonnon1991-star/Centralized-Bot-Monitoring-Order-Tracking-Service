@@ -595,4 +595,60 @@ describe('regressions', () => {
       );
     });
   });
+
+  // ---------------------------------------------------------------- third round (code review)
+
+  describe('25. hello fails on a database error', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it('before the bot is registered -> socket closed with 1011, so the agent reconnects instead of hanging', async () => {
+      jest.spyOn(ctx.bots, 'exists').mockRejectedValueOnce(new Error('db down'));
+      const a = agent('bot-01');
+      await a.opened;
+      a.send('hello', {});
+      expect(await a.closed).toBe(1011);
+
+      const b = agent('bot-01'); // the reconnect works normally
+      await b.opened;
+      b.send('hello', {});
+      await b.until('welcome');
+    });
+
+    it('after the bot is registered -> also closed, and the bot is offline', async () => {
+      jest.spyOn(ctx.dispatch, 'reconcileOnConnect').mockRejectedValueOnce(new Error('db down'));
+      const a = agent('bot-02');
+      await a.opened;
+      a.send('hello', {});
+      expect(await a.closed).toBe(1011);
+      await wait(200);
+      expect((await ctx.db.query(`SELECT status FROM oxide_bot_agents WHERE id = 'bot-02'`))[0].status).toBe('offline');
+    });
+  });
+
+  describe('26. socket closes while hello is marking the bot online', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it('the bot ends offline, not "online" with no connection', async () => {
+      const a = agent('bot-03');
+      const realConnect = ctx.bots.recordConnect.bind(ctx.bots);
+      const realDisconnect = ctx.bots.recordDisconnect.bind(ctx.bots);
+      let disconnected!: () => void;
+      const disconnectDone = new Promise<void>((r) => (disconnected = r));
+      jest.spyOn(ctx.bots, 'recordDisconnect').mockImplementation(async (...args) => {
+        await realDisconnect(...args);
+        disconnected();
+      });
+      // The close is handled (offline written) before the hello's "online" UPDATE lands.
+      jest.spyOn(ctx.bots, 'recordConnect').mockImplementationOnce(async (...args) => {
+        a.ws.close();
+        await disconnectDone;
+        await realConnect(...args);
+      });
+      await a.opened;
+      a.send('hello', {});
+      await a.closed;
+      await wait(300);
+      expect((await ctx.db.query(`SELECT status FROM oxide_bot_agents WHERE id = 'bot-03'`))[0].status).toBe('offline');
+    });
+  });
 });

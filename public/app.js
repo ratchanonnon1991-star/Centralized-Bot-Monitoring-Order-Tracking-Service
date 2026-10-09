@@ -246,7 +246,7 @@
         <span class="muted">Heartbeat ล่าสุด ${fmtTime(b.lastHeartbeat)}</span>
       </div>
       <h4>คำสั่งล่าสุด</h4>
-      <ul class="log-list">${cmds.map((c) => `<li><span class="t">${fmtShort(c.createdAt)}</span><span>#${c.id} <b>${esc(c.command)}</b> ${badge(c.status === 'success' ? 'b-green' : c.status === 'failed' ? 'b-red' : 'b-amber', c.status)} <span class="muted">${esc(c.transport ?? '')} ${c.result ? esc(JSON.stringify(c.result)).slice(0, 140) : ''}</span></span></li>`).join('') || '<li class="muted">—</li>'}</ul>
+      <ul class="log-list">${cmds.map((c) => `<li><span class="t">${fmtShort(c.createdAt)}</span><span>#${c.id} <b>${esc(c.command)}</b> ${badge(c.status === 'success' ? 'b-green' : c.status === 'failed' ? 'b-red' : 'b-amber', c.status)} <span class="muted">${esc(c.transport ?? '')} ${c.result ? esc(JSON.stringify(c.result).slice(0, 140)) : ''}</span></span></li>`).join('') || '<li class="muted">—</li>'}</ul>
       <h4>Log</h4>
       <ul class="log-list">${logs.map((l) => `<li><span class="t">${fmtShort(l.createdAt)}</span><span class="lv-${esc(l.level)}">${esc(l.message)}</span></li>`).join('') || '<li class="muted">—</li>'}</ul>`;
     if (!dlg.open) dlg.showModal();

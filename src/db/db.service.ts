@@ -69,16 +69,18 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
   /** Runs fn in a READ COMMITTED transaction; row locks inside fn decide concurrency. */
   async tx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
+    // A connection whose ROLLBACK failed is in an unknown state: destroy it instead of pooling it.
+    let broken: Error | undefined;
     try {
       await client.query('BEGIN');
       const result = await fn(client);
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
+      await client.query('ROLLBACK').catch((e: Error) => (broken = e));
       throw err;
     } finally {
-      client.release();
+      client.release(broken);
     }
   }
 

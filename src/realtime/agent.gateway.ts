@@ -121,6 +121,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         hostName: str(data?.hostName, 120),
         codeVersion: str(data?.codeVersion, 120),
       });
+      await this.settleIfClosed(client);
       const current = work(data?.currentOrder as Payload);
       const { abandon } = await this.dispatch.reconcileOnConnect(botId, current);
       const [killSwitch, enabled] = await Promise.all([this.system.getKillSwitch(), this.bots.isEnabled(botId)]);
@@ -135,6 +136,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       await this.commands.deliverPending(botId);
     } catch (err) {
       this.fail('hello', err, client);
+      // Without a welcome the agent never becomes ready (no heartbeats, no claims), and another
+      // hello on this socket is ignored: drop it so the agent reconnects and says hello again.
+      client.close(1011, 'hello failed');
     }
   }
 
@@ -148,6 +152,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         uptimeSeconds: num(data?.uptimeSeconds),
         codeVersion: str(data?.codeVersion, 120),
       });
+      await this.settleIfClosed(client);
       const held = Array.isArray(data?.heldCommands) ? data.heldCommands.slice(0, 20).map(posInt) : [];
       await this.commands.keepAlive(
         client.botId,
@@ -230,6 +235,18 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     } catch (err) {
       this.fail('log', err, client);
     }
+  }
+
+  /**
+   * The socket closed while we were marking the bot online: handleDisconnect may have written
+   * 'offline' before our UPDATE landed, leaving the bot "online" without a connection until the
+   * heartbeat timeout. Write 'offline' again - unless a newer connection of the bot took over.
+   */
+  private async settleIfClosed(client: AgentSocket): Promise<void> {
+    const botId = client.botId;
+    // Still CLOSING: handleDisconnect has not run yet and will write 'offline' after us.
+    if (!botId || client.readyState !== WebSocket.CLOSED || this.registry.isConnected(botId)) return;
+    await this.bots.recordDisconnect(botId, 'socket closed');
   }
 
   private send(client: WebSocket, event: string, data: unknown): void {

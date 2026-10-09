@@ -9,7 +9,8 @@
  * Reliability rules it follows:
  *  - reconnects forever with exponential backoff + jitter;
  *  - every report (order result, command result) stays in an outbox until the server acks it,
- *    and is re-sent after a reconnect - the server de-duplicates, so re-sending is always safe;
+ *    and is re-sent after a reconnect, or after REPORT_RESEND_MS without an ack (the server
+ *    failed to process it) - the server de-duplicates, so re-sending is always safe;
  *  - on hello it tells the server which order it still holds, so the server can resume it
  *    instead of re-queuing it;
  *  - commands are de-duplicated by id (the server re-delivers unacked commands).
@@ -66,6 +67,9 @@ const FATAL_CLOSE = new Map([
   [4409, 'another agent connected with the same bot id'],
 ]);
 
+/** An unacked report is re-sent on the next heartbeat after this long, even on a healthy connection. */
+export const REPORT_RESEND_MS = 5_000;
+
 const FAILURE_REASONS = ['game API timeout', 'top-up provider rejected request', 'captcha challenge', 'session expired'];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -78,7 +82,7 @@ export class BotAgent {
   private killSwitch = false;
   private frozen = false;
   private current: Work | null = null;
-  private readonly outbox = new Map<string, Message>();
+  private readonly outbox = new Map<string, { msg: Message; sentAt: number }>();
   private claimInFlight: string | null = null;
   private readonly answeredCommands = new Map<number, Message>();
   private pendingUpdate: { commandId: number; payload: Record<string, any> } | null = null;
@@ -183,7 +187,7 @@ export class BotAgent {
           this.print('warn', `server says order ${this.current.externalOrderId} is no longer ours - abandoning`);
         }
         this.print('info', `connected (enabled=${this.enabled}, killSwitch=${this.killSwitch})`);
-        for (const m of this.outbox.values()) this.rawSend(m);
+        this.flushOutbox(0);
         this.heartbeat();
         this.maybeClaim();
         break;
@@ -288,8 +292,7 @@ export class BotAgent {
               result: { reference: `TX-${randomUUID().slice(0, 8).toUpperCase()}`, deliveredAt: new Date() },
             },
           };
-      this.outbox.set(reportId, msg);
-      this.rawSend(msg);
+      this.post(reportId, msg);
       this.log(failed ? 'error' : 'info', `${failed ? 'FAILED' : 'done'} ${w.externalOrderId}${failed ? `: ${msg.data.error}` : ''}`);
     }
     await this.afterWork();
@@ -298,7 +301,7 @@ export class BotAgent {
   /** The order we hold: in progress, or finished but the report is not acknowledged yet. */
   private heldWork(): { orderId: number; attempt: number } | null {
     if (this.current) return this.current;
-    for (const m of this.outbox.values()) {
+    for (const { msg: m } of this.outbox.values()) {
       if (m.event === 'order.complete' || m.event === 'order.fail') return m.data as { orderId: number; attempt: number };
     }
     return null;
@@ -356,8 +359,22 @@ export class BotAgent {
     const msg: Message = { event: 'command.result', data: { commandId, ok, result } };
     this.answeredCommands.set(commandId, msg);
     if (this.answeredCommands.size > 200) this.answeredCommands.delete(this.answeredCommands.keys().next().value!);
-    this.outbox.set(`cmd-${commandId}`, msg);
+    this.post(`cmd-${commandId}`, msg);
+  }
+
+  /** Sends a report that must be acked; it stays in the outbox until then. */
+  private post(id: string, msg: Message): void {
+    this.outbox.set(id, { msg, sentAt: Date.now() });
     this.rawSend(msg);
+  }
+
+  /** Re-sends reports unacked for at least `olderThanMs` (0 = all, after a reconnect). */
+  private flushOutbox(olderThanMs: number): void {
+    const now = Date.now();
+    for (const entry of this.outbox.values()) {
+      if (now - entry.sentAt < olderThanMs) continue;
+      if (this.rawSend(entry.msg)) entry.sentAt = now;
+    }
   }
 
   /** Installs pending updates one after another; a call while one is running just leaves it queued. */
@@ -430,6 +447,8 @@ export class BotAgent {
         heldCommands: [this.pendingUpdate?.commandId, this.installingCommandId].filter((id) => id != null),
       },
     });
+    // The connection is fine but a report got no ack (the server failed on it): try again.
+    this.flushOutbox(REPORT_RESEND_MS);
   }
 
   private snapshot() {
